@@ -18,5 +18,9 @@ Cette étude de cas porte sur la **recherche de maximum d'un champ de potentiel 
 
 - **[simulation.py](src/lib/simulation.py)** : Classes `RobotSimulation` et `FleetSimulation` gérant l'intégration numérique des trajectoires et les visualisations (trajectoires 2D, évolution temporelle, champ de potentiel).
 
+## Stratégies
+
+Le fichier STRATEGIE.md a pour rôle de recueillir les différentes stratégies proposées par l'équipe pour cette étude de cas.
+
 ## Resources
 - cenmpc.m : Code MPC présenté en cours d'Architecture, issu d'une université italienne à citer si utilisé.

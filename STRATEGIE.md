@@ -1,0 +1,2 @@
+# Idée 1
+- Mettre les robots en formation (laquelle ?) et évaluer des deltas de potentiel entre eux. Cela permet de réaliser une descente de gradient jusqu'à un minimum local. Ensuite s'éloigner (plus besoin de formation) pour obtenir le profil de la "tâche".
