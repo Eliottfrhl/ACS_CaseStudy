@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-author: Sylvain Bertrand, 2025
+author: Sylvain Bertrand, 2023
 
    All variables are in SI units
     
@@ -19,55 +19,41 @@ author: Sylvain Bertrand, 2025
 import numpy as np
 import math
 from lib.potential import Potential
+from lib.simulation import generate_init_positions
 
 
 # ==============   "GLOBAL" VARIABLES KNOWN BY ALL THE FUNCTIONS ==============
 # all variables declared here will be known by functions below
 # use keyword "global" inside a function if the variable needs to be modified by the function
 
-# global toto
-
 global firstCall   # can be used to check the first call ever of a function
 firstCall = True
 
 global pot # DO NOT MODIFY - allows initialisation of potential function from this script
 
-
 # =============================================================================
-
-
-
-
-# =============================================================================
-def potential_seeking_ctrl(t, robotNo, robots_poses):
+def potential_seeking_ctrl(t, robotNo, robots_poses, _eval=False,_pot=None, difficulty=1, random=False):
 # =============================================================================
 
         
     # --- example of modification of global variables ---
     # ---(updated values of global variables will be known at next call of this funtion) ---
     # global toto
-    # toto = toto +1
+    # firstCall = False
     
     global firstCall
     global pot
     
-
-
     # --- part to be run only once --- 
     if firstCall:
-    
-        # !!!!!!!!!!!!!!!!!!!!!!!  DO NOT REMOVE !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        #     YOU CAN MODIFY difficulty {1,2,3} AND random {True, False} PARAMETERS
-        pot = Potential(difficulty=3, random=True)  
-        # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        
-        # you can add here other instructions to be executed only once
-        
+        if not _eval:
+            pot = Potential(difficulty=difficulty, random=random)
+        else:
+            pot = _pot
         firstCall = False
     # --------------------------------
     
-    
-    # get number of robots  (short notation)
+    # get number of robots
     N = robots_poses.shape[0]
     
     # get index of current robot  (short notation)
@@ -76,52 +62,17 @@ def potential_seeking_ctrl(t, robotNo, robots_poses):
     # get positions of all robots (short notation)
     x = robots_poses[:,0:2]
 
-    # get potential values measured by all robots at their current positions (short notation)
+    #get potential values measured by all robots at their current positions
     pot_measurement = np.zeros(N)
     for m in range(N):
         pot_measurement[m] = pot.value(x[m,:])
 
-    # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    # to get access to potential measurement from robot i at time t in the rest of the code
-    # you can use eihter use    pot_measurement[i]     or      pot.value(x[i,:])
-    # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    
-    
-    
-    # initialize control input vector for current robot i
+    # initialize control input vector
     ui = np.zeros(2)
-                       
-    # compute control input for current robot i
-    # ui = .... # <- TO BE COMPLETED 
+    u0 = np.zeros(2) # for leader agent
     
-    
-    return ui[0], ui[1], pot   # potential is also returned to be used by main script for displays (DO NOT MODIFY)
+    return ui[0], ui[1], pot   # potential is also returned to be used by main script for displays
 # =============================================================================
 
 
-
-
-
-# general template of a function defining a control law
-# =============================================================================
-def my_control_law(t, robotNo, robots_poses):
-# =============================================================================  
-
-    # --- example of modification of global variables ---
-    # ---(updated values of global variables will be known at next call of this funtion) ---
-    # global toto
-    # toto = toto +1
-
-    # number of robots
-    nbOfRobots= robots_poses.shape[0]
-    
-    
-    # control law
-    vx = 0.
-    vy = 0.
-
-    # .................  TO BE COMPLETED HERE .............................
-    
-    return vx, vy
-# =============================================================================
 

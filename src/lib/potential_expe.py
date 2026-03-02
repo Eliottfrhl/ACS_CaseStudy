@@ -27,11 +27,11 @@ class Potential:
         self.difficulty = difficulty
         self.random = random
         
-        self.xmin = -25.
-        self.xmax = 25.
+        self.xmin = -3.
+        self.xmax = 3.
         self.xstep = 0.05
-        self.ymin = -25.
-        self.ymax = 25.
+        self.ymin = -5.
+        self.ymax = 5.
         self.ystep = 0.05
         
         
@@ -43,17 +43,18 @@ class Potential:
             self.mu2 = [ xwidth*np.random.rand()-xwidth/2. , ywidth*np.random.rand()-ywidth/2. ]
             self.mu3 = [ xwidth*np.random.rand()-xwidth/2. , ywidth*np.random.rand()-ywidth/2. ]
         else:
-            self.mu1 = [6, 4]
+            self.mu1 = [2, -2]
             self.mu2 = [-2, -2]
-            self.mu3 = [-7, 10]
+            self.mu3 = [0, 3]
         
-        self.gaussian1 = multivariate_normal(self.mu1, [[1.0, 0.], [0., 1.]])
-        self.gaussian2 = multivariate_normal(self.mu2, [[0.5, 0.3], [0.3, 0.5]])
-        self.gaussian3 = multivariate_normal(self.mu3, [[0.8, 0.], [0., 0.8]])
+        scale_coeff = 0.3
+        self.gaussian1 = multivariate_normal(self.mu1, [[scale_coeff*1.0, scale_coeff*0.], [scale_coeff*0., scale_coeff*1.]])
+        self.gaussian2 = multivariate_normal(self.mu2, [[scale_coeff*0.5, scale_coeff*0.3], [scale_coeff*0.3, scale_coeff*0.5]])
+        self.gaussian3 = multivariate_normal(self.mu3, [[scale_coeff*0.8, scale_coeff*0.], [scale_coeff*0., scale_coeff*0.8]])
         
         self.weight1 = 10000
         self.weight2 = 1
-        self.weight3 = 1E-8
+        self.weight3 = 1E-2
         
         
         self.mu = [self.mu1]
@@ -84,8 +85,7 @@ class Potential:
         for i in range(self.difficulty):
             sumval += self.weight[i]*self.distribution[i].pdf(pos)
         
-        return np.fmax(310.+np.log10(sumval+1E-300), -10.)
-        #return np.fmax(310.+np.log10(sumval), 0.)
+        return np.fmax(310.+np.log10(sumval), -10.)
 
 
     # -------------------------------------------------------------------------

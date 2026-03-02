@@ -14,6 +14,51 @@ from lib.potential import Potential
 
 
 
+def generate_init_positions(n_robots, mode='grid', center=(-20, -20),
+                             spacing=1.0, data=None):
+    """
+    Generate initial (x, y) positions for n_robots.
+
+    Parameters
+    ----------
+    n_robots : int
+        Number of robots.
+    mode : str
+        'grid'   — Regular grid around `center` with `spacing` (default)
+        'random' — Uniformly random in [-20, 20] x [-20, 20]
+        'manual' — Pass explicit positions via `data`
+    center : tuple
+        (x, y) origin of the grid  [used only for mode='grid']
+    spacing : float
+        Distance between robots in the grid  [used only for mode='grid']
+    data : list or np.ndarray of shape (n_robots, 2)
+        Explicit positions  [used only for mode='manual']
+
+    Returns
+    -------
+    np.ndarray of shape (n_robots, 2)
+    """
+    if mode == 'random':
+        return 40.0 * np.random.rand(n_robots, 2) - 20.0
+
+    elif mode == 'manual':
+        if data is None:
+            raise ValueError("Provide `data` for mode='manual'.")
+        pos = np.array(data)
+        if pos.shape != (n_robots, 2):
+            raise ValueError(f"Expected shape ({n_robots}, 2), got {pos.shape}.")
+        return pos
+
+    else:  # 'grid'
+        positions  = []
+        grid_size  = int(np.ceil(np.sqrt(n_robots)))
+        cx, cy     = center
+        for i in range(n_robots):
+            row = i // grid_size
+            col = i % grid_size
+            positions.append([cx + col * spacing, cy + row * spacing])
+        return np.array(positions)
+
 # =============================================================================
 # adapted from Python Robotics
 def plot_robot(x, y, theta, x_traj, y_traj, scale=1, color='k'):  # pragma: no cover
