@@ -20,6 +20,7 @@ import numpy as np
 import math
 from lib.potential import Potential
 from lib.simulation import generate_init_positions
+from gradient_seeker import GradientSeeker
 
 
 # ==============   "GLOBAL" VARIABLES KNOWN BY ALL THE FUNCTIONS ==============
@@ -30,6 +31,8 @@ global firstCall   # can be used to check the first call ever of a function
 firstCall = True
 
 global pot # DO NOT MODIFY - allows initialisation of potential function from this script
+global seeker
+seeker = None
 
 # =============================================================================
 def potential_seeking_ctrl(t, robotNo, robots_poses, _eval=False,_pot=None, difficulty=1, random=False):
@@ -43,6 +46,7 @@ def potential_seeking_ctrl(t, robotNo, robots_poses, _eval=False,_pot=None, diff
     
     global firstCall
     global pot
+    global seeker
     
     # --- part to be run only once --- 
     if firstCall:
@@ -66,11 +70,20 @@ def potential_seeking_ctrl(t, robotNo, robots_poses, _eval=False,_pot=None, diff
     pot_measurement = np.zeros(N)
     for m in range(N):
         pot_measurement[m] = pot.value(x[m,:])
-
     # initialize control input vector
     ui = np.zeros(2)
-    u0 = np.zeros(2) # for leader agent
-    
+
+    # lazy-init gradient seeker that uses only local measurements history
+    if seeker is None:  
+        seeker = GradientSeeker(N, history_len=3, gain=0.8, max_speed=2.0)
+
+    # move only robot 0 (single seeker). Other robots stay still.
+    if robotNo == 0:
+        vx, vy = seeker.update(robotNo, x[robotNo, :], pot_measurement[robotNo])
+        ui[0], ui[1] = vx, vy
+    else:
+        ui[0], ui[1] = 0.0, 0.0
+
     return ui[0], ui[1], pot   # potential is also returned to be used by main script for displays
 # =============================================================================
 
