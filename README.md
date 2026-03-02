@@ -4,6 +4,16 @@
 
 Cette étude de cas porte sur la **recherche de maximum d'un champ de potentiel inconnu** par une flotte de robots mobiles. Les robots doivent collaborer pour localiser la position de maximum d'un champ scalaire dont ils ne peuvent mesurer que la valeur locale à leur position, puis évaluer la forme de la "tâche" de polluant.
 
+## Métrique d'évaluation :
+    - Trouver le maximum global (30%)
+    - Rapidité (20%)
+    - Trouver les maxima connexes (secondaires) (15%) -> 
+    - Rassemblement autour du maximum global (10%)
+    - Distance totale parcourue (10%)
+    - Evitement des collisions (10%)
+    - Partage du travail (5%)
+    - Variance des résultats
+
 ## Comment lancer la simulation
 
 ```bash
