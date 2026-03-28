@@ -29,11 +29,11 @@
 # ---------------------------------------------------------------
 # IMPORTS
 # ---------------------------------------------------------------
+import importlib
 import numpy as np
 import matplotlib.pyplot as plt
 from lib.simulation import FleetSimulation, generate_init_positions
 from lib.robot import Fleet, si_to_uni
-import control_algo_potential
 import eval_metrics
 
 # ===============================================================
@@ -43,6 +43,9 @@ import eval_metrics
 
 # --- Number of robots ---
 nbOfRobots = 5
+# --- Control module ---
+# Options: 'control_algo_potential', 'control_algo_potential_ldc', 'control_algo_isopotential'
+CONTROL_ALGO_MODULE = 'control_algo_potential'
 # --- Simulation duration (seconds) ---
 Tsim = 30.0
 # --- Sampling period (seconds) — do not change ---
@@ -52,6 +55,7 @@ RANDOM = True  # Set to False for non-deterministic randomisation
 # --- Robot dynamics model ---
 # Options: 'singleIntegrator2D'  or  'unicycle'
 robotDynamics = 'singleIntegrator2D'
+control_algo = importlib.import_module(CONTROL_ALGO_MODULE)
 
 # --- Display console output during simulation? ---
 DISP_CONSOLE = False  # Set to True to see potential values at each timestep (can slow down the simulation)
@@ -122,9 +126,9 @@ for t in simulation.t:
 
         # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
         #  YOUR ALGORITHM IS CALLED HERE
-        #  Implement potential_seeking_ctrl() in control_algo_potential.py
+        #  Implement potential_seeking_ctrl() in the selected control module
         # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-        vx, vy, pot = control_algo_potential.potential_seeking_ctrl(
+        vx, vy, pot = control_algo.potential_seeking_ctrl(
             t, robotNo, robots_poses, difficulty=DIFFICULTY, random=RANDOM
         )
 
