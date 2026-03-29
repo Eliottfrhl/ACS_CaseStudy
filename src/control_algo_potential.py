@@ -21,6 +21,7 @@ import math
 from lib.potential import Potential
 from lib.simulation import generate_init_positions
 from gradient_seeker import GradientSeeker
+from algo_de_controle.manager import ControlManager
 
 
 # ==============   "GLOBAL" VARIABLES KNOWN BY ALL THE FUNCTIONS ==============
@@ -33,6 +34,10 @@ firstCall = True
 global pot # DO NOT MODIFY - allows initialisation of potential function from this script
 global seeker
 seeker = None
+
+# manager will orchestrate initial placement and modes
+global manager
+manager = None
 
 # =============================================================================
 def potential_seeking_ctrl(t, robotNo, robots_poses, _eval=False,_pot=None, difficulty=1, random=False):
@@ -73,16 +78,16 @@ def potential_seeking_ctrl(t, robotNo, robots_poses, _eval=False,_pot=None, diff
     # initialize control input vector
     ui = np.zeros(2)
 
-    # lazy-init gradient seeker that uses only local measurements history
-    if seeker is None:  
-        seeker = GradientSeeker(N, history_len=3, gain=0.8, max_speed=2.0)
+    # lazy-init manager that uses seeker internally
+    global manager
+    if manager is None:
+        manager = ControlManager(N, vmax=10.0, cruise_scale=0.5,
+                                 xmin=pot.xmin, xmax=pot.xmax,
+                                 ymin=pot.ymin, ymax=pot.ymax)
 
-    # move only robot 0 (single seeker). Other robots stay still.
-    if robotNo == 0:
-        vx, vy = seeker.update(robotNo, x[robotNo, :], pot_measurement[robotNo])
-        ui[0], ui[1] = vx, vy
-    else:
-        ui[0], ui[1] = 0.0, 0.0
+    # delegate to manager for per-robot control
+    vx, vy = manager.control(t, robotNo, robots_poses, pot=pot)
+    ui[0], ui[1] = vx, vy
 
     return ui[0], ui[1], pot   # potential is also returned to be used by main script for displays
 # =============================================================================
