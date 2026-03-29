@@ -57,7 +57,7 @@ robotDynamics = 'singleIntegrator2D'
 DISP_CONSOLE = False  # Set to True to see potential values at each timestep (can slow down the simulation)
 
 # --- Show plots at the end? ---
-SHOW_ANIMATION   = False    # live animation (press ESC to skip)
+SHOW_ANIMATION   = True    # live animation (press ESC to skip)
 SHOW_TRAJECTORY  = True    # 2D trajectory plot
 SHOW_STATES      = False    # state components vs time
 SHOW_CONTROLS    = False    # control inputs vs time

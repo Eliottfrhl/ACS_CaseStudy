@@ -1,29 +1,29 @@
 # -*- coding: utf-8 -*-
 """
-Simplified ControlManager implementing the requested behaviors:
+Minimal ControlManager (single `default` mode).
 
-- Maintains a shared list of detected maxima (`max_list`). Each entry:
-  {'pos': np.array([x,y]), 'x_visited': [bool]*N, 'rearranged_x': np.linspace(...)}
-- Default phase: robots ascend (cruise upward) while allowing lateral
-  movement at borders; vy is kept non-negative (always points upward).
-- When robot reaches the y level of a detected max, it enters
-  'reposition' to pick the closest unused x from `rearranged_x` and move
-  horizontally there, then resume ascending.
-- If robot gets within `MARKED_AREA_RADIUS` of a detected max while
-  ascending, it immediately switches to reposition to the chosen x at
-  that max's y.
-- When all robots reach the top (`y >= ymax - tol_pos`), they all go to
-  the highest-value max recorded (final gathering phase).
+Responsibilities:
+- Hold basic simulation bounds and speed settings.
+- Wrap a `GradientSeeker` instance and provide a `control()` method
+  that returns a 2D velocity command for a robot.
+
+Behavior:
+- For each robot, call `seeker.update()` to get (gvx, gvy).
+- If the base command has a positive y component, apply it as-is.
+  Otherwise apply the opposite vector (flip both components) so the
+  robot moves upward.
+- Enforce horizontal boundary preference and clip to `vmax`.
+
+This file intentionally removes all previous multi-mode logic
+(max detection, repositioning, goto_max, logs) to keep a single
+default behavior as requested.
 """
 
 import numpy as np
 
-# radius to consider two detections the same marked maximum (meters)
-MARKED_AREA_RADIUS = 1.0
-
 
 class ControlManager:
-    def __init__(self, nb_robots, vmax=5.0, cruise_scale=0.1,
+    def __init__(self, nb_robots, vmax=5.0, cruise_scale=0.5,
                  xmin=-25., xmax=25., ymin=-25., ymax=25., tol_pos=1.0):
         self.nb_robots = int(nb_robots)
         self.vmax = float(vmax)
@@ -34,29 +34,33 @@ class ControlManager:
         self.ymax = float(ymax)
         self.tol_pos = float(tol_pos)
 
-        # lightweight seeker (kept as attribute to be set externally if desired)
-        # expected to be set by caller as manager.seeker = GradientSeeker(...)
+        # minimal commanded speed (fraction of vmax)
+        self.min_speed = 0.5 * self.vmax
+        self.min_yspeed = 0.8 * self.min_speed
+
+        # internal seeker used for gradient-based suggestions
         from gradient_seeker import GradientSeeker
+        # per-robot rectangular areas (cover full y range)
+        total_width = (self.xmax - self.xmin)
+        self.area_width = total_width / float(self.nb_robots) if self.nb_robots > 0 else total_width
+        self.areas = []
+        for i in range(self.nb_robots):
+            axmin = self.xmin + i * self.area_width
+            axmax = axmin + self.area_width
+            self.areas.append((axmin, axmax))
+        # precompute area centers (at ymin) for initial convergence
+        self.area_centers = [((a[0] + a[1]) / 2.0) for a in self.areas]
         self.seeker = GradientSeeker(self.nb_robots, history_len=8, gain=0.8, max_speed=self.vmax)
-
-        # per-robot state
-        self.mode = ['default'] * self.nb_robots     # 'default' | 'reposition' | 'at_top' | 'goto_max'
-        self.reposition_target = [None] * self.nb_robots  # (x_target, y_target, max_idx)
-
-        # simple potential-history based detection
-        # require `inc_required` increases then `dec_required` decreases in a sliding window
-        self.inc_required = 2
-        self.dec_required = 2
-        self.window_len = self.inc_required + self.dec_required + 1
-        self.pot_hist = [list() for _ in range(self.nb_robots)]
-        self.found_max = [False] * self.nb_robots
-
-        # shared detected maxima list
-        # each entry: {'pos': np.array([x,y]), 'x_visited': [False]*N, 'rearranged_x': np.linspace(xmin,xmax,N)}
-        self.max_list = []
-
-        # final gathering target (index into max_list) once all at top
-        self.final_target_idx = None
+        # exploration bookkeeping for gathering phase
+        self.at_top = [False] * self.nb_robots
+        self.gathering = False
+        self.best_pos = None
+        self.best_val = -float('inf')
+        self.kp_gather = 1.0
+        # initialization phase: converge to center_x at y = ymin
+        self.init_phase = True
+        self.init_reached = [False] * self.nb_robots
+        self.kp_init = 1.0
 
     def _clip_speed(self, vx, vy):
         s = np.hypot(vx, vy)
@@ -66,140 +70,103 @@ class ControlManager:
             vy *= scale
         return float(vx), float(vy)
 
-    def _choose_x_for_max(self, max_entry, pos_x):
-        # choose closest unused x from rearranged_x
-        refs = np.asarray(max_entry['rearranged_x'])
-        used = np.asarray(max_entry['x_visited'], dtype=bool)
-        candidates = np.where(~used)[0]
-        if candidates.size == 0:
-            return None, None
-        sub = candidates
-        idx = sub[int(np.argmin(np.abs(refs[sub] - pos_x)))]
-        return float(refs[idx]), int(idx)
+    def _ensure_min_speed(self, vx, vy):
+        """Ensure the vector (vx,vy) has norm >= self.min_speed.
 
-    def _add_marked_position(self, pos):
-        # if near existing, do not add; otherwise create new entry
-        pos = np.asarray(pos, dtype=float)
-        for idx, m in enumerate(self.max_list):
-            if np.linalg.norm(m['pos'] - pos) <= MARKED_AREA_RADIUS:
-                return idx
-        entry = {
-            'pos': pos.copy(),
-            'x_visited': [False] * self.nb_robots,
-            # generate nb_robots + 2 points and drop the extremes so no robot is assigned edges
-            'rearranged_x': np.linspace(self.xmin, self.xmax, self.nb_robots + 2)[1:-1]
-        }
-        self.max_list.append(entry)
-        return len(self.max_list) - 1
+        If norm==0, return an upward vector of magnitude min_speed.
+        If 0<norm<min_speed, scale up preserving direction.
+        """
+        vx = float(vx)
+        vy = float(vy)
+        s = np.hypot(vx, vy)
+        if s >= self.min_speed:
+            return vx, vy
+        if s > 0.0:
+            scale = (self.min_speed / s)
+            vx, vy = vx * scale, vy * scale
+            if vy <= self.min_yspeed:
+                vy = float(self.min_yspeed)
+            return vx, vy
+        # zero vector -> provide small upward motion
+        return 0.0, float(self.min_speed)
 
     def control(self, t, robot_no, robots_poses, pot=None):
+        """Return (vx, vy) for robot `robot_no`.
+
+        Args:
+            t: current time (unused)
+            robot_no: index of robot
+            robots_poses: array-like (N x 2 or N x 3) with robot states
+            pot: optional Potential (passed to seeker for measurement)
+
+        Behavior: single default mode described in module docstring.
+        """
         r = int(robot_no)
         pos = np.asarray(robots_poses[r, :2], dtype=float)
 
-        # final check: are all robots at top?
-        all_at_top = all(np.asarray(robots_poses[:, 1]) >= (self.ymax - self.tol_pos))
-        if all_at_top and len(self.max_list) > 0:
-            # compute best max by potential value
-            if self.final_target_idx is None and pot is not None:
-                vals = [float(pot.value(m['pos'])) for m in self.max_list]
-                self.final_target_idx = int(np.argmax(vals))
-                # switch robots to goto_max
-                for i in range(self.nb_robots):
-                    self.mode[i] = 'goto_max'
-
-        # if robot is already at top
-        if pos[1] >= (self.ymax - self.tol_pos):
-            # Only mark 'at_top' and idle if final_target not yet decided.
-            if self.final_target_idx is None:
-                self.mode[r] = 'at_top'
+        # Initialization phase: converge to the center of assigned area at y = ymin
+        if self.init_phase:
+            tx = float(self.area_centers[r])
+            ty = float(self.ymin)
+            dx = tx - pos[0]
+            dy = ty - pos[1]
+            # if close enough mark reached and stop
+            if np.hypot(dx, dy) <= self.tol_pos:
+                self.init_reached[r] = True
+                if all(self.init_reached):
+                    self.init_phase = False
                 return 0.0, 0.0
-
-        # GOTO_FINAL_MAX behavior: simple proportional control (no seeker, no clipping)
-        if self.mode[r] == 'goto_max' and self.final_target_idx is not None:
-            target = self.max_list[self.final_target_idx]['pos']
-            dx = float(target[0]) - pos[0]
-            dy = float(target[1]) - pos[1]
-            if np.hypot(dx, dy) <= MARKED_AREA_RADIUS:
-                return 0.0, 0.0
-            kp = 1.0
-            vx = kp * dx
-            vy = kp * dy
+            vx = self.kp_init * dx
+            vy = self.kp_init * dy
             return float(vx), float(vy)
 
-        # If currently repositioning: force horizontal move toward target x
-        if self.mode[r] == 'reposition':
-            tx, ty, midx = self.reposition_target[r]
-            if tx is None:
-                # fallback to default
-                self.mode[r] = 'default'
-            else:
-                dx = tx - pos[0]
-                if abs(dx) <= self.tol_pos:
-                    # reached lateral reference -> resume ascending
-                    self.mode[r] = 'default'
-                    self.reposition_target[r] = None
-                    return 0.0, self.cruise_speed
-                # horizontal motion only
-                vx = np.clip(dx * 2.0, -self.vmax, self.vmax)
-                vy = 0.0
-                vx, vy = self._clip_speed(vx, vy)
-                return vx, vy
-
-        # DEFAULT (ascending / exploration) behavior
-        # update potential history (for simple peak detection)
+        # get current potential reading if available and update best-known
         current_pot = float(pot.value(pos)) if pot is not None else 0.0
-        ph = self.pot_hist[r]
-        ph.append(current_pot)
-        if len(ph) > self.window_len:
-            ph.pop(0)
+        if pot is not None:
+            if current_pot > self.best_val:
+                self.best_val = current_pot
+                self.best_pos = pos.copy()
 
-        # detection of local maximum using sliding window: inc_required increases
-        # followed by dec_required decreases
-        if (not self.found_max[r]) and len(ph) >= self.window_len:
-            w = ph[-self.window_len:]
-            inc = self.inc_required
-            dec = self.dec_required
-            inc_ok = all(w[i] < w[i+1] for i in range(0, inc))
-            dec_ok = all(w[inc + j] > w[inc + j + 1] for j in range(0, dec))
-            if inc_ok and dec_ok:
-                self.found_max[r] = True
-                midx = self._add_marked_position(pos)
+        # ask seeker for a suggested velocity
+        gvx, gvy = self.seeker.update(r, pos, current_pot) if self.seeker is not None else (0.0, self.cruise_speed)
 
-        # run seeker to update its internal history and get a suggested direction
-        gvx, gvy = self.seeker.update(r, pos, current_pot) if pot is not None else self.seeker.update(r, pos, 0.0)
+        # If currently gathering (all robots reached top), move proportionally to best_pos
+        if self.gathering and (self.best_pos is not None):
+            dx = float(self.best_pos[0]) - pos[0]
+            dy = float(self.best_pos[1]) - pos[1]
+            # if close enough, stop
+            if np.hypot(dx, dy) <= 1e-3:
+                return 0.0, 0.0
+            vx = self.kp_gather * dx
+            vy = self.kp_gather * dy
+            return float(vx), float(vy)
 
-        # If while default ascending we get close to an existing marked max, switch to reposition for its level
-        for idx, m in enumerate(self.max_list):
-            if np.linalg.norm(m['pos'] - pos) <= MARKED_AREA_RADIUS:
-                # pick x and go there at y = m['pos'][1]
-                chosen_x, xi = self._choose_x_for_max(m, pos[0])
-                if chosen_x is not None:
-                    m['x_visited'][xi] = True
-                    self.reposition_target[r] = (chosen_x, float(m['pos'][1]), idx)
-                    self.mode[r] = 'reposition'
-                    return self.control(t, r, robots_poses, pot)
+        # If base command has positive y, use it; otherwise invert vector
+        # so we always have an upward motion component.
+        if gvy >= 0.0:
+            vx_use = float(gvx)
+            vy_use = float(gvy)
+        else:
+            vx_use = -float(gvx)
+            vy_use = -float(gvy)
 
-        # If robot crosses the y-level of any detected max (within tol), enter reposition
-        for idx, m in enumerate(self.max_list):
-            if abs(pos[1] - float(m['pos'][1])) <= self.tol_pos:
-                chosen_x, xi = self._choose_x_for_max(m, pos[0])
-                if chosen_x is not None:
-                    m['x_visited'][xi] = True
-                    self.reposition_target[r] = (chosen_x, float(m['pos'][1]), idx)
-                    self.mode[r] = 'reposition'
-                    return self.control(t, r, robots_poses, pot)
-
-        # Normal ascending: combine seeker lateral suggestion with enforced upward component
-        # keep vy at least cruise_speed (always upward)
-        vy_use = max(gvy, self.cruise_speed)
-        vx_use = gvx
-
-        # if at vertical boundaries keep vy positive and prefer move inward
+        # prefer inward motion when near the edges of the robot's assigned area
         x, y = pos
-        if x <= self.xmin + 1e-6:
+        axmin, axmax = self.areas[r]
+        if x <= axmin + 1e-6:
             vx_use = max(vx_use, 0.0)
-        if x >= self.xmax - 1e-6:
+        if x >= axmax - 1e-6:
             vx_use = min(vx_use, 0.0)
 
+        # If robot reached the top, stop (unless gathering has started)
+        if pos[1] >= (self.ymax - self.tol_pos):
+            self.at_top[r] = True
+            # if all robots at top, start gathering
+            if (not self.gathering) and all(self.at_top):
+                self.gathering = True
+            if not self.gathering:
+                return 0.0, 0.0
+
+        vx_use, vy_use = self._ensure_min_speed(vx_use, vy_use)
         vx_use, vy_use = self._clip_speed(vx_use, vy_use)
         return vx_use, vy_use
