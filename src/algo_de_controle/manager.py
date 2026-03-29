@@ -13,13 +13,10 @@ Behavior:
   Otherwise apply the opposite vector (flip both components) so the
   robot moves upward.
 - Enforce horizontal boundary preference and clip to `vmax`.
-
-This file intentionally removes all previous multi-mode logic
-(max detection, repositioning, goto_max, logs) to keep a single
-default behavior as requested.
 """
 
 import numpy as np
+from scipy.optimize import linear_sum_assignment
 
 
 class ControlManager:
@@ -61,6 +58,13 @@ class ControlManager:
         self.init_phase = True
         self.init_reached = [False] * self.nb_robots
         self.kp_init = 1.0
+        
+        # assignment for initial targets (computed once at start of init phase)
+        self.init_assigned = False
+        self.init_assignment = None
+        # per-robot assigned area index (defaults to identity mapping)
+        self.assigned_areas = list(range(self.nb_robots))
+        self.bounds_tol = 0.5
 
     def _clip_speed(self, vx, vy):
         s = np.hypot(vx, vy)
@@ -104,9 +108,26 @@ class ControlManager:
         r = int(robot_no)
         pos = np.asarray(robots_poses[r, :2], dtype=float)
 
-        # Initialization phase: converge to the center of assigned area at y = ymin
+        # Compute an optimal assignment from current robot positions to
+        # the set of starting targets (area centers at y = ymin) once.
+        if self.init_phase and (not self.init_assigned):
+            poses = np.asarray(robots_poses)[:, :2]
+            targets = np.array([[x, self.ymin] for x in self.area_centers], dtype=float)
+            # cost: Euclidean distance
+            cost = np.linalg.norm(poses[:, None, :] - targets[None, :, :], axis=2)
+            row_ind, col_ind = linear_sum_assignment(cost)
+            assignment = np.empty(self.nb_robots, dtype=int)
+            assignment[row_ind] = col_ind
+            self.init_assignment = assignment.tolist()
+            # set per-robot assigned area according to the optimization result
+            self.assigned_areas = self.init_assignment.copy()
+            self.init_assigned = True
+
+        # Initialization phase: converge to the assigned target (area center at y = ymin)
         if self.init_phase:
-            tx = float(self.area_centers[r])
+            # default to own index center if assignment not computed for some reason
+            assigned_idx = (self.init_assignment[r] if (self.init_assignment is not None) else r)
+            tx = float(self.area_centers[int(assigned_idx)])
             ty = float(self.ymin)
             dx = tx - pos[0]
             dy = ty - pos[1]
@@ -152,10 +173,12 @@ class ControlManager:
 
         # prefer inward motion when near the edges of the robot's assigned area
         x, y = pos
-        axmin, axmax = self.areas[r]
-        if x <= axmin + 1e-6:
+        # use the area assigned by the initialization assignment
+        assigned_area_idx = (self.assigned_areas[r] if (r >= 0 and r < len(self.assigned_areas)) else r)
+        axmin, axmax = self.areas[int(assigned_area_idx)]
+        if x <= axmin + self.bounds_tol:
             vx_use = max(vx_use, 0.0)
-        if x >= axmax - 1e-6:
+        if x >= axmax - self.bounds_tol:
             vx_use = min(vx_use, 0.0)
 
         # If robot reached the top, stop (unless gathering has started)

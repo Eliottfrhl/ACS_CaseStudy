@@ -68,11 +68,11 @@ SHOW_POTENTIAL   = True    # potential measurements vs time
 # ---------------------------------------------------------------
 initPositions = generate_init_positions(
     nbOfRobots,
-    mode    = 'manual',      # 'grid' | 'random' | 'manual'
+    mode    = 'random',      # 'grid' | 'random' | 'manual'
     # center  = (-20, -20),
     # spacing = 1.0,
     # data  = [[-20,-20],[-19,-20],[-18,-20],[-17,-20],[-16,-20]]  # for 'manual'
-    data = [[x, -25] for x in np.linspace(-25, 25, nbOfRobots)]  # for 'manual' (alternative)
+    # data = [[x, -25] for x in np.linspace(-25, 25, nbOfRobots)]  # for 'manual' (alternative)
 )
 
 # ===============================================================
