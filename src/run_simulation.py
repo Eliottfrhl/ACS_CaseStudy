@@ -62,7 +62,7 @@ DISP_CONSOLE = False  # Set to True to see potential values at each timestep (ca
 
 # --- Show plots at the end? ---
 SHOW_ANIMATION   = True    # live animation (press ESC to skip)
-SHOW_TRAJECTORY  = False    # 2D trajectory plot
+SHOW_TRAJECTORY  = True    # 2D trajectory plot
 SHOW_STATES      = False    # state components vs time
 SHOW_CONTROLS    = False    # control inputs vs time
 SHOW_POTENTIAL   = True    # potential measurements vs time
@@ -72,10 +72,11 @@ SHOW_POTENTIAL   = True    # potential measurements vs time
 # ---------------------------------------------------------------
 initPositions = generate_init_positions(
     nbOfRobots,
-    mode    = 'grid',      # 'grid' | 'random' | 'manual'
-    center  = (-20, -20),
-    spacing = 1.0,
+    mode    = 'random',      # 'grid' | 'random' | 'manual'
+    # center  = (-20, -20),
+    # spacing = 1.0,
     # data  = [[-20,-20],[-19,-20],[-18,-20],[-17,-20],[-16,-20]]  # for 'manual'
+    # data = [[x, -25] for x in np.linspace(-25, 25, nbOfRobots)]  # for 'manual' (alternative)
 )
 
 # ===============================================================

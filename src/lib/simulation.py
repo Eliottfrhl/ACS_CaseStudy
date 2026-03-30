@@ -311,6 +311,7 @@ class FleetSimulation:
         self.dt = dt # sampling period for numerical integration (in sec)
         self.t = np.arange(t0, tf-t0+dt, dt) # vector of time stamps
 
+        self.animation_freq = 10  # animate only every ... steps
 
 # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 # !!!!!!! PRévoir un add data from robot avec l index du robot
@@ -499,7 +500,7 @@ class FleetSimulation:
             
             plt.pause(pause)
             
-            i=i+1
+            i=i+self.animation_freq
     '''
     # -----------------------------------------------------------------------------------------
     def plotFleet(self, figNo = 1, xmin=-10, xmax=10, ymin=-10, ymax=10, mod=None, links=True):
