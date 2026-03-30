@@ -20,6 +20,7 @@ import math
 import sys
 import time
 import types
+from itertools import permutations
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -28,10 +29,11 @@ import numpy as np
 
 def _install_scipy_fallback():
     """
-    Provide the tiny scipy.stats surface needed by lib/potential.py when scipy
-    is unavailable in the local Python environment.
+    Provide the tiny scipy surface needed by this project when scipy is
+    unavailable in the local Python environment.
     """
     try:
+        import scipy.optimize  # noqa: F401
         import scipy.stats  # noqa: F401
         return
     except ModuleNotFoundError:
@@ -57,11 +59,39 @@ def _install_scipy_fallback():
         lambda mean, cov: _FallbackMultivariateNormal(mean, cov)
     )
 
+    def _linear_sum_assignment(cost_matrix):
+        cost = np.asarray(cost_matrix, dtype=float)
+        if cost.ndim != 2:
+            raise ValueError("cost_matrix must be 2-dimensional")
+
+        n_rows, n_cols = cost.shape
+        if n_rows > n_cols:
+            raise ValueError("fallback linear_sum_assignment expects rows <= cols")
+
+        best_perm = None
+        best_cost = None
+
+        for perm in permutations(range(n_cols), n_rows):
+            total_cost = float(sum(cost[row_idx, col_idx] for row_idx, col_idx in enumerate(perm)))
+            if (best_cost is None) or (total_cost < best_cost):
+                best_cost = total_cost
+                best_perm = perm
+
+        return (
+            np.arange(n_rows, dtype=int),
+            np.asarray(best_perm, dtype=int),
+        )
+
+    optimize_module = types.ModuleType("scipy.optimize")
+    optimize_module.linear_sum_assignment = _linear_sum_assignment
+
     scipy_module = types.ModuleType("scipy")
     scipy_module.stats = stats_module
+    scipy_module.optimize = optimize_module
 
     sys.modules.setdefault("scipy", scipy_module)
     sys.modules["scipy.stats"] = stats_module
+    sys.modules["scipy.optimize"] = optimize_module
 
 
 _install_scipy_fallback()
