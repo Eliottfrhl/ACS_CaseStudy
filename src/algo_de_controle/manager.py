@@ -64,6 +64,8 @@ class ControlManager:
         self.init_assignment = None
         # per-robot assigned area index (defaults to identity mapping)
         self.assigned_areas = list(range(self.nb_robots))
+        # per-robot initial vertical target choice: 'ymin' or 'ymax'
+        self.init_targets = [None] * self.nb_robots
         self.bounds_tol = 0.5
 
     def _clip_speed(self, vx, vy):
@@ -74,25 +76,39 @@ class ControlManager:
             vy *= scale
         return float(vx), float(vy)
 
-    def _ensure_min_speed(self, vx, vy):
-        """Ensure the vector (vx,vy) has norm >= self.min_speed.
+    def _ensure_min_speed(self, vx, vy, robot_no=None):
+        """Ensure the vector (vx,vy) has norm >= self.min_speed and
+        that the vertical component matches the robot's intended initial
+        movement direction (up for `ymin`, down for `ymax`).
 
-        If norm==0, return an upward vector of magnitude min_speed.
-        If 0<norm<min_speed, scale up preserving direction.
+        If `robot_no` is provided and `self.init_targets[robot_no]` is
+        set to `'ymax'`, a downward minimum y-speed is enforced.
         """
         vx = float(vx)
         vy = float(vy)
         s = np.hypot(vx, vy)
+
+        # preferred vertical direction: +1 for up (ymin), -1 for down (ymax)
+        pref = 1
+        if (robot_no is not None) and (0 <= robot_no < len(self.init_targets)):
+            if self.init_targets[robot_no] == 'ymax':
+                pref = -1
+
         if s >= self.min_speed:
+            # ensure vertical component has at least min_yspeed in preferred dir
+            if pref * vy < self.min_yspeed:
+                vy = float(pref * self.min_yspeed)
             return vx, vy
+
         if s > 0.0:
             scale = (self.min_speed / s)
             vx, vy = vx * scale, vy * scale
-            if vy <= self.min_yspeed:
-                vy = float(self.min_yspeed)
+            if pref * vy < self.min_yspeed:
+                vy = float(pref * self.min_yspeed)
             return vx, vy
-        # zero vector -> provide small upward motion
-        return 0.0, float(self.min_speed)
+
+        # zero vector -> provide small motion in preferred vertical direction
+        return 0.0, float(pref * self.min_speed)
 
     def control(self, t, robot_no, robots_poses, pot=None):
         """Return (vx, vy) for robot `robot_no`.
@@ -112,15 +128,30 @@ class ControlManager:
         # the set of starting targets (area centers at y = ymin) once.
         if self.init_phase and (not self.init_assigned):
             poses = np.asarray(robots_poses)[:, :2]
-            targets = np.array([[x, self.ymin] for x in self.area_centers], dtype=float)
-            # cost: Euclidean distance
-            cost = np.linalg.norm(poses[:, None, :] - targets[None, :, :], axis=2)
+            centers = np.array(self.area_centers, dtype=float)
+            # compute cost matrix: for each robot i and each area j,
+            # cost = min(distance to (center_j, ymin), distance to (center_j, ymax))
+            dx = poses[:, None, 0] - centers[None, :]
+            dy_ymin = poses[:, None, 1] - float(self.ymin)
+            dy_ymax = poses[:, None, 1] - float(self.ymax)
+            dist_ymin = np.hypot(dx, dy_ymin[:, :, None].squeeze()) if False else np.sqrt(dx**2 + dy_ymin**2)
+            dist_ymax = np.sqrt(dx**2 + dy_ymax**2)
+            cost = np.minimum(dist_ymin, dist_ymax)
+            # solve assignment robot->area
             row_ind, col_ind = linear_sum_assignment(cost)
             assignment = np.empty(self.nb_robots, dtype=int)
             assignment[row_ind] = col_ind
+            # record assigned area per robot
             self.init_assignment = assignment.tolist()
-            # set per-robot assigned area according to the optimization result
             self.assigned_areas = self.init_assignment.copy()
+            # set init_targets (ymin or ymax) for each assigned robot
+            # row_ind maps robot indices from assignment; iterate pairs
+            for ri, ai in zip(row_ind.tolist(), col_ind.tolist()):
+                # choose ymin if it's closer or equal
+                cx = float(self.area_centers[ai])
+                d_ymin = np.hypot(poses[ri,0]-cx, poses[ri,1]-float(self.ymin))
+                d_ymax = np.hypot(poses[ri,0]-cx, poses[ri,1]-float(self.ymax))
+                self.init_targets[ri] = 'ymin' if d_ymin <= d_ymax else 'ymax'
             self.init_assigned = True
 
         # Initialization phase: converge to the assigned target (area center at y = ymin)
@@ -128,7 +159,8 @@ class ControlManager:
             # default to own index center if assignment not computed for some reason
             assigned_idx = (self.init_assignment[r] if (self.init_assignment is not None) else r)
             tx = float(self.area_centers[int(assigned_idx)])
-            ty = float(self.ymin)
+            # target y depends on assignment (ymin or ymax)
+            ty = float(self.ymin) if (self.init_targets[r] == 'ymin') else float(self.ymax)
             dx = tx - pos[0]
             dy = ty - pos[1]
             # if close enough mark reached and stop
@@ -163,13 +195,25 @@ class ControlManager:
             return float(vx), float(vy)
 
         # If base command has positive y, use it; otherwise invert vector
-        # so we always have an upward motion component.
-        if gvy >= 0.0:
-            vx_use = float(gvx)
-            vy_use = float(gvy)
+        # so we always have an upward motion component for robots assigned to ymin.
+        # For robots assigned to ymax we prefer downward motion.
+        target_y = (self.init_targets[r] if (r >= 0 and r < len(self.init_targets)) else 'ymin')
+        if target_y == 'ymax':
+            # prefer negative y (downwards)
+            if gvy <= 0.0:
+                vx_use = float(gvx)
+                vy_use = float(gvy)
+            else:
+                vx_use = -float(gvx)
+                vy_use = -float(gvy)
         else:
-            vx_use = -float(gvx)
-            vy_use = -float(gvy)
+            # default: prefer upward motion
+            if gvy >= 0.0:
+                vx_use = float(gvx)
+                vy_use = float(gvy)
+            else:
+                vx_use = -float(gvx)
+                vy_use = -float(gvy)
 
         # prefer inward motion when near the edges of the robot's assigned area
         x, y = pos
@@ -181,15 +225,28 @@ class ControlManager:
         if x >= axmax - self.bounds_tol:
             vx_use = min(vx_use, 0.0)
 
-        # If robot reached the top, stop (unless gathering has started)
-        if pos[1] >= (self.ymax - self.tol_pos):
+        # Stop condition depends on where the robot started in init phase:
+        # - if it started at ymin (init_targets == 'ymin'), stop when reaching ymax
+        # - if it started at ymax (init_targets == 'ymax'), stop when reaching ymin
+        start_side = (self.init_targets[r] if (r >= 0 and r < len(self.init_targets)) else 'ymin')
+        reached_target = False
+        if start_side == 'ymax':
+            # robot started at ymax and moves down: stop at ymin
+            if pos[1] <= (self.ymin + self.tol_pos):
+                reached_target = True
+        else:
+            # default: robot started at ymin and moves up: stop at ymax
+            if pos[1] >= (self.ymax - self.tol_pos):
+                reached_target = True
+
+        if reached_target:
             self.at_top[r] = True
-            # if all robots at top, start gathering
+            # if all robots reached their respective targets, start gathering
             if (not self.gathering) and all(self.at_top):
                 self.gathering = True
             if not self.gathering:
                 return 0.0, 0.0
 
-        vx_use, vy_use = self._ensure_min_speed(vx_use, vy_use)
+        vx_use, vy_use = self._ensure_min_speed(vx_use, vy_use, r)
         vx_use, vy_use = self._clip_speed(vx_use, vy_use)
         return vx_use, vy_use
